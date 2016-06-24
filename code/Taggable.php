@@ -298,6 +298,75 @@ class Taggable extends DataExtension {
     }
 
     /**
+     * Returns a datalist filtered by tags and weighted
+     * @param  string       $className  the name of the class to get
+     * @param  array|string $tags       description]
+     * @param  int          $minWeight  minimum weight percentage
+     * @param  string       $where      an additional SQL fragment to append to the where clause
+     * @return DataList                 the data list containing the tagged content
+     */
+    public static function tagged_with_weighted($className, $tags, $minWeight = 10, $where = '', $lookupMode = 'OR') {
+        $taggedWith = static::tagged_with($className, $tags, $where, $lookupMode);
+
+        // generate a cache key
+        $key = preg_replace('/[^A-Za-z0-9]/', '_', __FUNCTION__) .
+               implode(
+                    '_',
+                    array_map(
+                        array(get_called_class(), 'safe_args'),
+                        func_get_args()
+                    )
+                );
+
+        // check if cached
+        if (empty(static::$cache[$key])) {
+
+            // make sure $tags is an array
+            if (!is_array($tags)) {
+                $tags = array_map('strtolower', static::explode_tags($tags));
+            }
+
+            $weighting = array();
+
+            // get the weight by checking for shared tags
+            foreach ($taggedWith as $tagged) {
+                $taggedTags = array_map('strtolower', static::explode_tags($tagged->Tags));
+                $tagCount = count($taggedTags);
+                $weight = 0;
+
+                foreach ($taggedTags as $tag) {
+                    $weight += (int) (in_array($tag, $tags));
+                }
+
+                // get the weight percentage
+                $weighting[$tagged->ID] = round(($weight / $tagCount) * 100, 2);
+            }
+
+            // filter out if the weight doesn't meet the minimum
+            $weighting = array_filter(
+                $weighting,
+                function($w) use ($minWeight) {
+                    return ($w >= $minWeight);
+                }
+            );
+
+            // sort by highest weight
+            arsort($weighting);
+
+            // sort the data list and elminate irrelevant objects
+            $ids = array_keys($weighting);
+            $taggedWith->where('ID IN (' . implode(',', $ids) . ')')
+                       ->sort('FIELD(ID,' . implode(',', $ids) . ')');
+
+            // store in cache
+            static::$cache[$key] = $taggedWith;
+        }
+
+        // return cached value
+        return static::$cache[$key];
+    }
+
+    /**
      * ye olde getTaggedWith method - hopefully superceeded by the tagged_with method
      * @param [type]  $tags       [description]
      * @param [type]  $filterSql  [description]
